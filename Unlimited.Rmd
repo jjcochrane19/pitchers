@@ -1,0 +1,165 @@
+---
+title: "Unlimited"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+# Code that takes pitcher and opposing team peripheral data and attempts to predict whether they will go over or under their strikeout total
+
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(glmnet)
+library(devtools)
+library(ggplot2)
+
+# Read in CSV file downloaded from Google Sheets
+
+data = read_csv("C:\\Users\\jjcoc\\OneDrive\\Desktop\\projects\\baseball\\pitchers.csv")
+
+data = data[ , apply(data, 2, function(x) !any(is.na(x)))]
+info = data[c("Date", "Pitcher", "O/U K")]
+
+data = data[, -c(1:2)]
+
+data = data %>%
+  mutate_all(funs(str_replace(., "Over", "1")))%>%
+  mutate_all(funs(str_replace(., "Under", "0"))) %>%
+  mutate_all(function(x) as.numeric(as.character(x)))%>%
+  subset(select = -c(`Opp. Team`))
+
+# Basic Linear Model
+
+train <- data[1:75, c(names(data))]
+test <- data[75:nrow(data), c("O/U K","Mean Release MPH","Mean Release X","Mean Release Y","Mean Release Z","K/9","K/BB","WHIP","ERA","GB/FB","Opp. Win %","Opp BA","Opp OBP","Opp OPS+","Opp K", "Opp BB")]
+
+lm1 = glm(`Over/Under?` ~ ., family="binomial", data=train)
+
+summary(lm1)
+```
+
+```{r}
+x = model.matrix(`Over/Under?` ~ .,train)[,-1]
+y = train$`Over/Under?`
+
+lm.lasso = glmnet(x,y,alpha=.75)
+
+cv.out = cv.glmnet(x,y,alpha=1)
+lambda.best = cv.out$lambda.min
+
+glm_output = as.data.frame(predict(lm.lasso, s=lambda.best, newx=as.matrix(test),interval = 'confidence'))
+```
+
+```{r}
+library(pls)
+
+# PCA Model
+
+set.seed(1)
+
+model <- pcr(`Over/Under?` ~., data=data, scale=TRUE, validation="CV")
+
+y_test <- data[75:nrow(data), c("Over/Under?")]
+
+model <- pcr(`Over/Under?` ~., data=train, scale=TRUE, validation="CV")
+pcr_pred <- predict(model, test, ncomp=2)
+
+df = as.data.frame(pcr_pred)["Over/Under?.2 comps"]
+
+df = df %>%
+  rename("PCA Predicted" = "Over/Under?.2 comps")
+
+y = as.data.frame(y_test)
+
+df$`Outcome` = y$`Over/Under?`
+df$`GLM Predicted` = glm_output$s1
+
+df$`PCA Correct` = ifelse(df$`PCA Predicted` >= .5 & df$`Outcome` == 1 | df$`PCA Predicted` < .5 & df$`Outcome` == 0, "Y", "N")
+
+pca_prop_correct = (sum(df$`PCA Correct` == "Y")/nrow(df))
+
+# Proportion of instances where PCA model predicts correctly
+
+pca_prop_correct
+
+df$`GLM Correct` = ifelse(df$`GLM Predicted` >= .5 & df$`Outcome` == 1 | df$`GLM Predicted` < .5 & df$`Outcome` == 0, "Y", "N")
+
+glm_prop_correct = (sum(df$`GLM Correct` == "Y")/nrow(df))
+
+# Proportion of instances where GLM model predicts correctly
+
+glm_prop_correct
+
+df$`LM1 Predicted` = predict(lm1, test)
+
+df$`LM1 Correct` = ifelse(df$`LM1 Predicted` >= .5 & df$`Outcome` == 1 | df$`LM1 Predicted` < .5 & df$`Outcome` == 0, "Y", "N")
+
+lm1_prop_correct = (sum(df$`LM1 Correct` == "Y")/nrow(df))
+
+# Proportion of instances where GLM model predicts correctly
+
+lm1_prop_correct
+
+test_player_info = info[75:nrow(info),]
+df$Date = test_player_info$Date
+df$Pitcher = test_player_info$Pitcher
+df$`O/U K` = test_player_info$`O/U K`
+
+final_df = df %>%
+  mutate(`PCA Guess` = round(`PCA Predicted`, digits = 0))%>%
+  mutate(`GLM Guess` = round(`GLM Predicted`, digits = 0))%>%
+  mutate(`LM1 Guess` = round(`LM1 Predicted`, digits = 0))
+
+final_df = final_df[, c("Date", "Pitcher", "O/U K", "Outcome", "PCA Predicted", "PCA Guess", "PCA Correct", "GLM Predicted", "GLM Guess", "GLM Correct", "LM1 Predicted", "LM1 Guess", "LM1 Correct")]
+
+final_df = final_df %>% 
+    mutate(Outcome = replace(Outcome, Outcome == 1, "Over"))%>% 
+    mutate(Outcome = replace(Outcome, Outcome == 0, "Under"))%>% 
+    mutate(`PCA Guess` = replace(`PCA Guess`, `PCA Guess` == 1, "Over"))%>% 
+    mutate(`PCA Guess` = replace(`PCA Guess`, `PCA Guess` == 0, "Under"))%>% 
+    mutate(`GLM Guess` = replace(`GLM Guess`, `GLM Guess` == 1, "Over"))%>% 
+    mutate(`GLM Guess` = replace(`GLM Guess`, `GLM Guess` == 0, "Under"))%>% 
+    mutate(`LM1 Guess` = replace(`LM1 Guess`, `LM1 Guess` >= 1, "Over"))%>% 
+    mutate(`LM1 Guess` = replace(`LM1 Guess`, `LM1 Guess` <= 0, "Under"))
+
+final_df
+```
+```{r}
+# Plotting to try to visualize any trends
+
+ggplot(final_df, aes(`O/U K`, `PCA Predicted`, color = `PCA Correct`))+
+  geom_point(alpha = .4)+
+  geom_hline(yintercept = .5)
+
+ggplot(final_df, aes(`O/U K`, `GLM Predicted`, color = `GLM Correct`))+
+  geom_point(alpha = .4)+
+  geom_hline(yintercept = .5)
+
+ggplot(final_df, aes(`O/U K`, `LM1 Predicted`, color = `LM1 Correct`))+
+  geom_point(alpha = .4)+
+  geom_hline(yintercept = .5)
+```
+
+```{r}
+# Trying a new model
+
+model = glm(`Over/Under?` ~ ., family="binomial", data = train)
+
+probs = predict(model, test, "response")
+
+info2 = slice(info, 75:n())
+
+info2["GLM 2 Prediction"] = probs
+ou = data["Over/Under?"]
+info2["Result"] = slice(ou, 75:n())
+
+info2$`GLM 2 Correct?` = ifelse(info2$`GLM 2 Prediction` >= .5 & info2$Result == 1 | info2$`GLM 2 Prediction` < .5 & info2$Result == 0, "Y", "N")
+
+sum(info2$`GLM 2 Correct?` == "Y")/nrow(info2)
+
+info2
+```
+
+

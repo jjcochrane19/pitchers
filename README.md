@@ -2,7 +2,7 @@
 
 ## unlimited.py
 
-This code scrapes pitcher strikeout total prop bets for the day, ad puts them into a spreadsheet, along with relevant data about the pitcher and the opposing team
+This code scrapes pitcher strikeout total prop bets for the day, and puts them into a [spreadsheet] (https://docs.google.com/spreadsheets/d/10qq5okYIgb8XchBUVqbWQGZRv_AcuPfnct3Ah0rY0vI/edit?usp=sharing), along with relevant data about the pitcher and the opposing team
 
 ## unlimited.rmd
 

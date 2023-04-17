@@ -17,7 +17,8 @@ library(ggplot2)
 
 # Read in CSV file downloaded from Google Sheets
 
-data = read_csv("C:\\Users\\jjcoc\\OneDrive\\Desktop\\projects\\baseball\\pitchers.csv")
+data = rbind(read_csv("C:\\Users\\jjcoc\\Desktop\\projects\\money\\train.csv"), read_csv("C:\\Users\\jjcoc\\Desktop\\projects\\money\\test.csv"))%>%
+  drop_na()
 
 data = data[ , apply(data, 2, function(x) !any(is.na(x)))]
 info = data[c("Date", "Pitcher", "O/U K")]
@@ -32,8 +33,8 @@ data = data %>%
 
 # Basic Linear Model
 
-train <- data[1:75, c(names(data))]
-test <- data[75:nrow(data), c("O/U K","Mean Release MPH","Mean Release X","Mean Release Y","Mean Release Z","K/9","K/BB","WHIP","ERA","GB/FB","Opp. Win %","Opp BA","Opp OBP","Opp OPS+","Opp K", "Opp BB")]
+train <- data[1:90, c(names(data))]
+test <- data[90:nrow(data), c("O/U K","Mean Release MPH","Mean Release X","Mean Release Y","Mean Release Z","K/9","K/BB","WHIP","ERA","GB/FB","Opp. Win %","Opp BA","Opp OBP","Opp OPS+","Opp K", "Opp BB")]
 
 lm1 = glm(`Over/Under?` ~ ., family="binomial", data=train)
 
@@ -49,11 +50,15 @@ lm.lasso = glmnet(x,y,alpha=.75)
 cv.out = cv.glmnet(x,y,alpha=1)
 lambda.best = cv.out$lambda.min
 
-glm_output = as.data.frame(predict(lm.lasso, s=lambda.best, newx=as.matrix(test),interval = 'confidence'))
+glm_output = as.data.frame(predict(lm.lasso, s=lambda.best, newx=as.matrix(test),interval = 'confidence'))%>%
+  drop_na()
+
+glm_output
 ```
 
 ```{r}
 library(pls)
+data = na.omit(data)
 
 # PCA Model
 
@@ -61,7 +66,7 @@ set.seed(1)
 
 model <- pcr(`Over/Under?` ~., data=data, scale=TRUE, validation="CV")
 
-y_test <- data[75:nrow(data), c("Over/Under?")]
+y_test <- data[90:nrow(data), c("Over/Under?")]
 
 model <- pcr(`Over/Under?` ~., data=train, scale=TRUE, validation="CV")
 pcr_pred <- predict(model, test, ncomp=2)
@@ -69,7 +74,8 @@ pcr_pred <- predict(model, test, ncomp=2)
 df = as.data.frame(pcr_pred)["Over/Under?.2 comps"]
 
 df = df %>%
-  rename("PCA Predicted" = "Over/Under?.2 comps")
+  rename("PCA Predicted" = "Over/Under?.2 comps")%>%
+  drop_na()
 
 y = as.data.frame(y_test)
 
@@ -102,7 +108,7 @@ lm1_prop_correct = (sum(df$`LM1 Correct` == "Y")/nrow(df))
 
 lm1_prop_correct
 
-test_player_info = info[75:nrow(info),]
+test_player_info = info[90:nrow(info),]
 df$Date = test_player_info$Date
 df$Pitcher = test_player_info$Pitcher
 df$`O/U K` = test_player_info$`O/U K`
@@ -124,7 +130,14 @@ final_df = final_df %>%
     mutate(`LM1 Guess` = replace(`LM1 Guess`, `LM1 Guess` >= 1, "Over"))%>% 
     mutate(`LM1 Guess` = replace(`LM1 Guess`, `LM1 Guess` <= 0, "Under"))
 
-final_df
+dataframe1 = na.omit(df)
+dataframe1 %>%
+    mutate(`PCA Predicted` = replace(`PCA Predicted`, `PCA Predicted` == 1, "Over"))%>% 
+    mutate(`PCA Predicted` = replace(`PCA Predicted`, `PCA Predicted` == 0, "Under"))%>% 
+    mutate(`LM1 Predicted` = replace(`LM1 Predicted`, `LM1 Predicted` >= 1, "Over"))%>% 
+    mutate(`LM1 Predicted` = replace(`LM1 Predicted`, `LM1 Predicted` <= 0, "Under"))
+
+dataframe1
 ```
 ```{r}
 # Plotting to try to visualize any trends
@@ -149,11 +162,11 @@ model = glm(`Over/Under?` ~ ., family="binomial", data = train)
 
 probs = predict(model, test, "response")
 
-info2 = slice(info, 75:n())
+info2 = slice(info, 90:n())
 
 info2["GLM 2 Prediction"] = probs
 ou = data["Over/Under?"]
-info2["Result"] = slice(ou, 75:n())
+info2["Result"] = slice(ou, 90:n())
 
 info2$`GLM 2 Correct?` = ifelse(info2$`GLM 2 Prediction` >= .5 & info2$Result == 1 | info2$`GLM 2 Prediction` < .5 & info2$Result == 0, "Y", "N")
 
@@ -162,4 +175,11 @@ sum(info2$`GLM 2 Correct?` == "Y")/nrow(info2)
 info2
 ```
 
+```{r}
+sum(dataframe1$`PCA Correct` == "Y")/68
+sum(dataframe1$`GLM Correct` == "Y")/68
+sum(dataframe1$`LM1 Correct` == "Y")/68
 
+dataframe1%>%
+  filter(dataframe1$`GLM Correct` == "Y")
+```

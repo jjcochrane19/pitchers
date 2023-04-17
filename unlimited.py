@@ -3,6 +3,7 @@
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import re
+import json
 import smtplib, ssl
 from lxml import html
 import datetime
@@ -33,19 +34,19 @@ scope = [
     'https://www.googleapis.com/auth/drive',
     'https://www.googleapis.com/auth/drive.file'
     ]
-file_name = 'pitchers.json'
+file_name = 'freemoney.json'
 creds = ServiceAccountCredentials.from_json_keyfile_name(file_name,scope)
 client = gspread.authorize(creds)
 
 # Fetch the sheet
 worksheet = client.open_by_url('https://docs.google.com/spreadsheets/d/10qq5okYIgb8XchBUVqbWQGZRv_AcuPfnct3Ah0rY0vI/edit#gid=0')
-sheet = worksheet.get_worksheet(0)
+sheet = worksheet.get_worksheet(1)
 
 def next_available_row(worksheet):
     str_list = list(filter(None, worksheet.col_values(1)))
     return str(len(str_list)+1)
 
-pitching_data = (pitching_stats_bref(2022))
+pitching_data = (pitching_stats_bref(2023))
 for i in range(len(pitching_data)):
     try:
         pitching_data["Tm"][i+1] = str.split(pitching_data["Tm"][i+1], ",")[-1]
@@ -286,11 +287,15 @@ def standings(season:Optional[int] = None) -> pd.DataFrame:
 
 # My code again
 
-url = "https://www.stokastic.com/mlb/mlb-player-props/"
-page = requests.get(url)
-data_frame = pd.read_html(page.text, displayed_only=False)[0]
+url = 'https://www.rotowire.com/betting/mlb/player-props.php'
+soup = BeautifulSoup(requests.get(url).content, 'html.parser')
 
-data_frame = data_frame.drop_duplicates(('Name', 'Name')).reset_index()
+script_tag = soup.find(lambda tag: tag.name == 'script' and tag.text and '"Strikeouts"' in tag.text)
+
+data = re.search(r"data:\s*(\[.*\])", script_tag.text)
+data = json.loads(data.group(1))
+
+data_frame = pd.DataFrame(data)
 
 games = "https://www.fantasypros.com/mlb/schedules/"
 page = requests.get(games)
@@ -476,11 +481,9 @@ di3 = {"Arizona":"ARI",
 "Washington": "WAS"}
 
 games_frame.columns = ['Away', 'Home', '3', "4", '5', '6', '7', '8']
-
 games_frame = games_frame.replace({"Away": di})
 games_frame = games_frame.replace({"Home": di})
 games = games_frame[["Home", "Away"]].dropna()
-
 a = games[games['Home'].str.contains(',')]
 
 end_int = a.index.values.tolist()[0] - 1
@@ -490,26 +493,40 @@ games = games.loc[:end_int]
 dict1 = pd.Series(games.Home.values,index=games.Away).to_dict()
 dict2 = dict((v,k) for k,v in dict1.items())
 games_dict = {**dict1, **dict2}
-
 standings = standings()
 
 standings = pd.concat(standings).replace({"Tm": di2}).reset_index()
 
 def update_game(first_name, last_name, team, ou):
+    
+    alt_name = None
     if team == "CWS":
         team = "CHA"
-    opp = games_dict[team]
-    batting = team_batting_bref(opp, 2022)
-    batting_data = batting[batting['Pos'] != "P"]
-    index = next_row = next_available_row(sheet)
+    else:
+        pass
 
+    opp = games_dict[team]
+        
+    if opp == "CWS":
+        opp = "CHA"
+        alt_name = "CWS"
+    if opp == "WAS":
+        opp = "WSN"
+        alt_name = "WAS"
+    else:
+        pass
+   
+    batting_data = team_batting_bref(opp, 2023)
+    batting_data = batting_data[batting_data['Pos'] != "P"]
+    print(batting_data)
+    index = next_row = next_available_row(sheet)
     try:
         pitcher_data_local = pitching_data[pitching_data['Name'] == (first_name + " " + last_name)]
         player_info = playerid_lookup(last_name, first_name)
         sheet.update_cell(index,1,str(date.today()))
         sheet.update_cell(index,2,first_name+" "+last_name)
-        first_date = '2022-01-01'
-        last_date = '2022-12-12'
+        first_date = '2023-01-01'
+        last_date = '2023-12-12'
         player_key = str(player_info["key_mlbam"][0])
         sheet.update_cell(index, 3, ou)
         sheet.update_cell(index, 4, (statcast_pitcher(first_date, last_date, player_key)["release_speed"]).mean())
@@ -524,14 +541,21 @@ def update_game(first_name, last_name, team, ou):
         sheet.update_cell(index, 13, opp)
         opp_info = standings.loc[standings["Tm"] == opp]
         opp_idx = list(opp_info.index.values)[0]
-        win_perc = float(standings.loc[standings['Tm'] == opp]["W-L%"][opp_idx])
+        if opp == "WSN":
+            win_perc = float(standings.loc[standings['Tm'] == "WAS"]["W-L%"][opp_idx])
+        else:
+            win_perc = float(standings.loc[standings['Tm'] == opp]["W-L%"][opp_idx])
+        
         sheet.update_cell(index, 14, win_perc)
         sheet.update_cell(index, 15, sum(list(map(int,list(batting_data["H"]))))/sum(list(map(int,list(batting_data["AB"])))))
         sheet.update_cell(index, 16, (sum(list(map(int,list(batting_data["H"])))) + sum(list(map(int,list(batting_data["HBP"])))) +
                                      sum(list(map(int,list(batting_data["BB"]))))) / sum(list(map(int,list(batting_data["PA"]))))
                           )
         pa_list = list((list(map(int,list(batting_data["PA"][0:22])))))
-        ops_plus_list = list((list(map(int,list(batting_data["OPS+"][0:22])))))
+        try:
+            ops_plus_list = list((list(map(int,list(batting_data["OPS+"][0:22])))))
+        except:
+            pass
         multiplied = sum(list(np.multiply(pa_list, ops_plus_list)))
         
         sheet.update_cell(index, 17, multiplied / (sum(list(map(int,list(batting_data["PA"]))))))
@@ -541,10 +565,10 @@ def update_game(first_name, last_name, team, ou):
         pass
 
 for i in range(len(data_frame)):
-    last_name = data_frame[('Name', 'Name')][i].split(' ')[1]
-    first_name = data_frame[('Name', 'Name')][i].split(' ')[0]
-    team = data_frame[('Team', 'Team')][i]
-    matchup = data_frame[('Matchup', 'Matchup')][i]
-    ou = data_frame[('Unnamed: 5_level_0', 'Prop Line')][i]
+    first_name = data_frame["firstName"][i]
+    last_name = data_frame["lastName"][i]
+    team = data_frame["team"][i]
+    matchup = data_frame["opp"][i]
+    ou = data_frame["fanduel_strikeouts"][i]
     update_game(first_name, last_name, team, ou)
     time.sleep(20)

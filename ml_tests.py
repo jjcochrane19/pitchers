@@ -1,11 +1,12 @@
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 
 data_2022 = pd.read_csv("2022.csv")
 data_2023 = pd.read_csv("2023.csv")
@@ -36,9 +37,9 @@ classifiers = [
 
 param_grid = [
     {'kernel': ['linear', 'rbf'], 'C': [0.001, 0.01, 0.1, 1, 10, 100, 1000]},  
-    {'max_depth': [None] + list(range(1, 21))},  
-    {'n_neighbors': list(range(1, 21))}, 
-    {"n_estimators": [1, 10, 50, 100, 200], "max_depth": [None] + list(range(5, 31, 5))},  
+    {'max_depth': [None] + list(range(1, 31))},  
+    {'n_neighbors': list(range(1, 31))}, 
+    {"n_estimators": list(range(1,201)), "max_depth": [None] + list(range(1, 51))},  
     {'C': [0.001, 0.01, 0.1, 1, 10, 100, 1000]} 
 ]
 

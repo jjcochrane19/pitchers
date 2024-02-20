@@ -9,21 +9,43 @@ output:
 # Code that takes pitcher and opposing team peripheral data and attempts to predict whether they will go over or under their strikeout total
 
 library(readr)
+library(pls)
 library(tidyverse)
 library(dplyr)
 library(glmnet)
 library(devtools)
 library(ggplot2)
+```
 
-# Read in CSV file downloaded from Google Sheets
+```{r}
 
-data = rbind(read_csv("C:\\Users\\jjcoc\\Desktop\\projects\\money\\train.csv"), read_csv("C:\\Users\\jjcoc\\Desktop\\projects\\money\\test.csv"))%>%
+test1 = read_csv("C:\\Users\\jjcoc\\Desktop\\projects\\money\\train-2023.csv")%>%
+  select(-`Actual`)
+data = rbind(test1, read_csv("C:\\Users\\jjcoc\\Desktop\\projects\\money\\train-2022.csv"))%>%
   drop_na()
 
-data = data[ , apply(data, 2, function(x) !any(is.na(x)))]
+test = read_csv("C:\\Users\\jjcoc\\Desktop\\projects\\money\\test.csv")
+#test = data[200:362,]
+#data = data[1:200,]
+#test = test[1:217, ]
+test = test[929:934, ]
+test_data = test%>%
+  select(-c(`PCA Prop`, `GLM 1 Prop`, `LM1 Prop`, `GLM 2 Prop`, `Net Prop`))%>%
+  select(c("K/9", "WHIP", "ERA", "Over/Under?"))
+
+test = test %>%
+  select(-c(`PCA Prop`, `GLM 1 Prop`, `LM1 Prop`, `GLM 2 Prop`, `Net Prop`))
+
+test = full_join(test, test_data, by = c("K/9" = "K/9", "WHIP" = "WHIP", "ERA" = "ERA", "Over/Under?" = "Over/Under?"))
+
 info = data[c("Date", "Pitcher", "O/U K")]
+test_info = test[c("Date", "Pitcher", "O/U K")]
+  
+data_facts = data[, c(1:2)]
+test_facts = test[, c(1:2)]
 
 data = data[, -c(1:2)]
+test = test[, -c(1:2)]
 
 data = data %>%
   mutate_all(funs(str_replace(., "Over", "1")))%>%
@@ -31,17 +53,29 @@ data = data %>%
   mutate_all(function(x) as.numeric(as.character(x)))%>%
   subset(select = -c(`Opp. Team`))
 
-# Basic Linear Model
+test = test %>%
+  mutate_all(funs(str_replace(., "Over", "1")))%>%
+  mutate_all(funs(str_replace(., "Under", "0"))) %>%
+  mutate_all(function(x) as.numeric(as.character(x)))%>%
+  subset(select = -c(`Opp. Team`))
 
-train <- data[1:90, c(names(data))]
-test <- data[90:nrow(data), c("O/U K","Mean Release MPH","Mean Release X","Mean Release Y","Mean Release Z","K/9","K/BB","WHIP","ERA","GB/FB","Opp. Win %","Opp BA","Opp OBP","Opp OPS+","Opp K", "Opp BB")]
-
-lm1 = glm(`Over/Under?` ~ ., family="binomial", data=train)
-
-summary(lm1)
+test
 ```
 
 ```{r}
+# Basic Linear Model
+
+train <- data[c(names(data))]
+test <- test[c("O/U K","Mean Release MPH","Mean Release X","Mean Release Y","Mean Release Z","K/9","K/BB","WHIP","ERA","GB/FB","Opp. Win %","Opp BA","Opp OBP","Opp OPS+","Opp K", "Opp BB")]
+
+lm1 = glm(`Over/Under?` ~ ., family="binomial", data=train)
+
+# summary(lm1)
+```
+
+```{r}
+# model glm2
+
 x = model.matrix(`Over/Under?` ~ .,train)[,-1]
 y = train$`Over/Under?`
 
@@ -52,30 +86,28 @@ lambda.best = cv.out$lambda.min
 
 glm_output = as.data.frame(predict(lm.lasso, s=lambda.best, newx=as.matrix(test),interval = 'confidence'))%>%
   drop_na()
-
-glm_output
 ```
 
 ```{r}
-library(pls)
-data = na.omit(data)
-
 # PCA Model
 
 set.seed(1)
 
 model <- pcr(`Over/Under?` ~., data=data, scale=TRUE, validation="CV")
 
-y_test <- data[90:nrow(data), c("Over/Under?")]
+test = inner_join(test, test_data, by = c("K/9" = "K/9", "WHIP" = "WHIP", "ERA" = "ERA"))%>%
+  drop_na()
+
+y_test <- test["Over/Under?"]
 
 model <- pcr(`Over/Under?` ~., data=train, scale=TRUE, validation="CV")
 pcr_pred <- predict(model, test, ncomp=2)
 
-df = as.data.frame(pcr_pred)["Over/Under?.2 comps"]
+df = as.data.frame(pcr_pred)["Over/Under?.2 comps"]%>%
+  drop_na()
 
 df = df %>%
-  rename("PCA Predicted" = "Over/Under?.2 comps")%>%
-  drop_na()
+  rename("PCA Predicted" = "Over/Under?.2 comps")
 
 y = as.data.frame(y_test)
 
@@ -85,10 +117,25 @@ df$`GLM Predicted` = glm_output$s1
 df$`PCA Correct` = ifelse(df$`PCA Predicted` >= .5 & df$`Outcome` == 1 | df$`PCA Predicted` < .5 & df$`Outcome` == 0, "Y", "N")
 
 pca_prop_correct = (sum(df$`PCA Correct` == "Y")/nrow(df))
+```
 
+```{r}
+# Trying a new model
+
+model = glm(`Over/Under?` ~ ., family="binomial", data = train)
+
+probs = predict(model, test, "response")
+
+df["GLM 2 Predicted"] = probs
+ou_test = test["Over/Under?"]
+ou_data = data["Over/Under?"]
+df["Result"] = ou_test
+
+df$`GLM 2 Correct` = ifelse(df$`GLM 2 Predicted` >= .5 & df$Result == 1 | df$`GLM 2 Predicted` < .5 & df$Result == 0, "Y", "N")
+```
+
+```{r}
 # Proportion of instances where PCA model predicts correctly
-
-pca_prop_correct
 
 df$`GLM Correct` = ifelse(df$`GLM Predicted` >= .5 & df$`Outcome` == 1 | df$`GLM Predicted` < .5 & df$`Outcome` == 0, "Y", "N")
 
@@ -96,29 +143,29 @@ glm_prop_correct = (sum(df$`GLM Correct` == "Y")/nrow(df))
 
 # Proportion of instances where GLM model predicts correctly
 
-glm_prop_correct
-
 df$`LM1 Predicted` = predict(lm1, test)
 
 df$`LM1 Correct` = ifelse(df$`LM1 Predicted` >= .5 & df$`Outcome` == 1 | df$`LM1 Predicted` < .5 & df$`Outcome` == 0, "Y", "N")
 
 lm1_prop_correct = (sum(df$`LM1 Correct` == "Y")/nrow(df))
 
+glm2_prop_correct = (sum(df$`GLM 2 Correct` == "Y")/nrow(df))
+
 # Proportion of instances where GLM model predicts correctly
 
-lm1_prop_correct
+df$Date = test_info$Date
+df$Pitcher = test_info$Pitcher
+df$`O/U K` = test_info$`O/U K`
+```
 
-test_player_info = info[90:nrow(info),]
-df$Date = test_player_info$Date
-df$Pitcher = test_player_info$Pitcher
-df$`O/U K` = test_player_info$`O/U K`
-
+```{r}
 final_df = df %>%
   mutate(`PCA Guess` = round(`PCA Predicted`, digits = 0))%>%
   mutate(`GLM Guess` = round(`GLM Predicted`, digits = 0))%>%
-  mutate(`LM1 Guess` = round(`LM1 Predicted`, digits = 0))
+  mutate(`LM1 Guess` = round(`LM1 Predicted`, digits = 0))%>%
+  mutate(`GLM 2 Guess` = round(`GLM 2 Predicted`, digits = 0))
 
-final_df = final_df[, c("Date", "Pitcher", "O/U K", "Outcome", "PCA Predicted", "PCA Guess", "PCA Correct", "GLM Predicted", "GLM Guess", "GLM Correct", "LM1 Predicted", "LM1 Guess", "LM1 Correct")]
+final_df = final_df[, c("Date", "Pitcher", "O/U K", "Outcome", "PCA Predicted", "PCA Guess", "PCA Correct", "GLM Predicted", "GLM Guess", "GLM Correct", "LM1 Predicted", "LM1 Guess", "LM1 Correct", "GLM 2 Predicted", "GLM 2 Guess", "GLM 2 Correct")]
 
 final_df = final_df %>% 
     mutate(Outcome = replace(Outcome, Outcome == 1, "Over"))%>% 
@@ -128,20 +175,18 @@ final_df = final_df %>%
     mutate(`GLM Guess` = replace(`GLM Guess`, `GLM Guess` == 1, "Over"))%>% 
     mutate(`GLM Guess` = replace(`GLM Guess`, `GLM Guess` == 0, "Under"))%>% 
     mutate(`LM1 Guess` = replace(`LM1 Guess`, `LM1 Guess` >= 1, "Over"))%>% 
-    mutate(`LM1 Guess` = replace(`LM1 Guess`, `LM1 Guess` <= 0, "Under"))
+    mutate(`LM1 Guess` = replace(`LM1 Guess`, `LM1 Guess` <= 0, "Under"))%>% 
+    mutate(`GLM 2 Guess` = replace(`GLM 2 Guess`, `GLM 2 Guess` >= 1, "Over"))%>% 
+    mutate(`GLM 2 Guess` = replace(`GLM 2 Guess`, `GLM 2 Guess` <= 0, "Under"))
 
-dataframe1 = na.omit(df)
-dataframe1 %>%
-    mutate(`PCA Predicted` = replace(`PCA Predicted`, `PCA Predicted` == 1, "Over"))%>% 
-    mutate(`PCA Predicted` = replace(`PCA Predicted`, `PCA Predicted` == 0, "Under"))%>% 
-    mutate(`LM1 Predicted` = replace(`LM1 Predicted`, `LM1 Predicted` >= 1, "Over"))%>% 
-    mutate(`LM1 Predicted` = replace(`LM1 Predicted`, `LM1 Predicted` <= 0, "Under"))
+FACTS = final_df%>%
+  select("Date", "Pitcher", "O/U K", "PCA Guess", "GLM Guess", "LM1 Guess", "GLM 2 Guess")
 
-dataframe1
+FACTS
 ```
+
 ```{r}
 # Plotting to try to visualize any trends
-
 ggplot(final_df, aes(`O/U K`, `PCA Predicted`, color = `PCA Correct`))+
   geom_point(alpha = .4)+
   geom_hline(yintercept = .5)
@@ -153,33 +198,146 @@ ggplot(final_df, aes(`O/U K`, `GLM Predicted`, color = `GLM Correct`))+
 ggplot(final_df, aes(`O/U K`, `LM1 Predicted`, color = `LM1 Correct`))+
   geom_point(alpha = .4)+
   geom_hline(yintercept = .5)
+
+ggplot(final_df, aes(`O/U K`, `GLM 2 Predicted`, color = `GLM 2 Correct`))+
+  geom_point(alpha = .4)+
+  geom_hline(yintercept = .5)
 ```
 
 ```{r}
-# Trying a new model
+lm1_prop_correct = (sum(final_df$`LM1 Correct` == "Y")/nrow(final_df))
 
-model = glm(`Over/Under?` ~ ., family="binomial", data = train)
+glm_prop_correct = (sum(final_df$`GLM Correct` == "Y")/nrow(final_df))
 
-probs = predict(model, test, "response")
+pca_prop_correct = (sum(final_df$`PCA Correct` == "Y")/nrow(final_df))
 
-info2 = slice(info, 90:n())
+glm2_prop_correct = (sum(final_df$`GLM 2 Correct` == "Y")/nrow(final_df))
 
-info2["GLM 2 Prediction"] = probs
-ou = data["Over/Under?"]
-info2["Result"] = slice(ou, 90:n())
+lm1_prop_correct
 
-info2$`GLM 2 Correct?` = ifelse(info2$`GLM 2 Prediction` >= .5 & info2$Result == 1 | info2$`GLM 2 Prediction` < .5 & info2$Result == 0, "Y", "N")
+glm_prop_correct
 
-sum(info2$`GLM 2 Correct?` == "Y")/nrow(info2)
+pca_prop_correct
 
-info2
+glm2_prop_correct
 ```
 
 ```{r}
-sum(dataframe1$`PCA Correct` == "Y")/68
-sum(dataframe1$`GLM Correct` == "Y")/68
-sum(dataframe1$`LM1 Correct` == "Y")/68
+rounded_df = final_df%>%
+  select(c("Date", "Pitcher", `O/U K`, "Outcome", `PCA Predicted`, `GLM Predicted`, `LM1 Predicted`, `GLM 2 Predicted`))%>%
+  mutate(`GLM Predicted` = round(10*(`GLM Predicted`), digits = 2), `PCA Predicted` = round(10*(`PCA Predicted`), digits = 2), `GLM 2 Predicted` = round(10*(`GLM 2 Predicted`), digits = 2), `LM1 Predicted` = round(`LM1 Predicted`, digits =))%>% 
+  mutate(`PCA Predicted` = replace(`PCA Predicted`, `PCA Predicted` > `O/U K`, "Over"))%>% 
+  mutate(`PCA Predicted` = replace(`PCA Predicted`, `PCA Predicted` <= `O/U K`, "Under"))%>% 
+  mutate(`GLM Predicted` = replace(`GLM Predicted`, `GLM Predicted` > `O/U K`, "Over"))%>% 
+  mutate(`GLM Predicted` = replace(`GLM Predicted`, `GLM Predicted` <= `O/U K`, "Under"))%>% 
+  mutate(`LM1 Predicted` = replace(`LM1 Predicted`, `LM1 Predicted` >= 1, "Over"))%>% 
+  mutate(`LM1 Predicted` = replace(`LM1 Predicted`, `LM1 Predicted` <= 0, "Under"))%>% 
+  mutate(`GLM 2 Predicted` = replace(`GLM 2 Predicted`, `GLM 2 Predicted` > `O/U K`, "Over"))%>% 
+  mutate(`GLM 2 Predicted` = replace(`GLM 2 Predicted`, `GLM 2 Predicted` <= `O/U K`, "Under"))%>%
+  mutate(`PCA Correct?` = ifelse(`PCA Predicted` == `Outcome`, "Y", "N"))%>%
+  mutate(`GLM Correct?` = ifelse(`GLM Predicted` == `Outcome`, "Y", "N"))%>%
+  mutate(`GLM 2 Correct?` = ifelse(`GLM 2 Predicted` == `Outcome`, "Y", "N"))%>%
+  mutate(`LM1 Correct?` = ifelse(`LM1 Predicted` == `Outcome`, "Y", "N"))
 
-dataframe1%>%
-  filter(dataframe1$`GLM Correct` == "Y")
+lm1_prop_correct = (sum(rounded_df$`LM1 Correct` == "Y")/nrow(rounded_df))
+
+glm_prop_correct = (sum(rounded_df$`GLM Correct` == "Y")/nrow(rounded_df))
+
+pca_prop_correct = (sum(rounded_df$`PCA Correct` == "Y")/nrow(rounded_df))
+
+glm2_prop_correct = (sum(rounded_df$`GLM 2 Correct` == "Y")/nrow(rounded_df))
+
+lm1_prop_correct
+
+glm_prop_correct
+
+pca_prop_correct
+
+glm2_prop_correct
+```
+
+```{r}
+final_df%>%
+  select(c("Date", "O/U K", "Outcome", "GLM 2 Predicted", "GLM 2 Correct"))
+
+ggplot(final_df, aes(`O/U K`, `GLM 2 Predicted`, color = `GLM 2 Correct`))+
+  geom_point(alpha = .4)+
+  geom_hline(yintercept = .5)
+```
+
+```{r}
+dataset = read_csv("C:\\Users\\jjcoc\\Desktop\\projects\\money\\train-2023.csv")%>%
+  drop_na()
+
+names = dataset %>%
+  select(c("Date", "Pitcher", `Opp. Team`, `Over/Under?`))
+
+test_names = names[201:389,]
+
+dataset_1 = dataset %>%
+  select(-c("Date", "Pitcher", `Opp. Team`, `Over/Under?`))
+
+dataset_2 = dataset %>%
+  select(-c("Date", "Pitcher", `Opp. Team`, `Actual`))
+
+train_1 = dataset_1[1:200,]
+train_2 = dataset_2[1:200,]
+test_1 = dataset_1[201:389,]
+test_2 = dataset_2[201:389,]
+
+test_names$Actual = test_1$Actual
+test_names$`O/U K` = test_1$`O/U K`
+
+mlm1 = glm(Actual ~ ., data = train_1)
+mlm2 = glm(`Over/Under?` ~ ., data = train_2)
+
+test_names$`Prediction 1` = predict(mlm1, test_1, type="response")
+test_names$`Prediction 2` = predict(mlm2, test_2, type="response")
+
+test = test_names %>%
+  mutate(`Preciction 1 Simplified` = round(`Prediction 1`))%>%
+  mutate(`Preciction 2 Simplified` = round(`Prediction 2`))%>%
+  mutate(`Prediction 2 Correct?` = case_when(
+    `Preciction 2 Simplified` == `Over/Under?`  ~ 1 ,
+    `Preciction 2 Simplified` != `Over/Under?`  ~ 0))%>%
+  mutate(`Prediction 1 Correct?` = case_when(
+    `Preciction 1 Simplified` >= `O/U K` & `Over/Under?` == 1  ~ 1 ,
+    `Preciction 1 Simplified` <= `O/U K` & `Over/Under?` == 0  ~ 1,
+    `Preciction 1 Simplified` <= `O/U K` & `Over/Under?` == 1  ~ 0 ,
+    `Preciction 1 Simplified` >= `O/U K` & `Over/Under?` == 0  ~ 0))
+
+ggplot(test, aes(x = `O/U K`, y = `Prediction 1`))+
+  geom_point()+
+  geom_abline(slope = 1, intercept = 0)
+
+ggplot(test, aes(x = `O/U K`, y = `Prediction 2`))+
+  geom_point()+
+  geom_abline(slope = 1, intercept = 0)
+
+mean(test$`Prediction 1 Correct?`)
+```
+
+```{r}
+test_data = read.csv("test.csv")[1:689,]
+
+test_data = test_data %>%
+  select(c(`Over.Under.`, `PCA.Predicted`, `GLM.1.Predicted`, `LM1.Predicted`, `GLM.2.Predicted`, `Net.Prediction`))%>%
+  mutate(`PCA Correct?` = ifelse(`PCA.Predicted` == `Over.Under.`, 1, 0))%>%
+  mutate(`GLM 1 Correct?` = ifelse(`GLM.1.Predicted` == `Over.Under.`, 1, 0))%>%
+  mutate(`LM 1 Correct?` = ifelse(`LM1.Predicted` == `Over.Under.`, 1, 0))%>%
+  mutate(`GLM 2 Correct?` = ifelse(`GLM.2.Predicted` == `Over.Under.`, 1, 0))%>%
+  mutate(`Net Correct?` = ifelse(`Net.Prediction` == `Over.Under.`, 1, 0))
+
+net_1 = test_data%>%
+  filter(Net.Prediction == 1)
+
+mean(net_1$`Net Correct?`)
+
+test_2 = test_data %>%
+  select(`Over.Under.`, `PCA.Predicted`, `GLM.1.Predicted`, `LM1.Predicted`, `GLM.2.Predicted`, `Over.Under.`)
+
+test_2$Sum <- rowSums(test_2[c("PCA.Predicted", "GLM.1.Predicted", "LM1.Predicted", "GLM.2.Predicted")])
+
+test_2%>%
+  filter(Sum >= 3)
 ```

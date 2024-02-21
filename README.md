@@ -11,3 +11,7 @@ This code is a test regression model and PCA analysis of the data
 ## ml_tests.py
 
 This file runs the machine learning tests to predict outcomes
+
+### Current best model
+
+RandomForestClassifier(max_depth=2, n_estimators=10), 56.32% accuracy
